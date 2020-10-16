@@ -62,7 +62,7 @@ std::vector<CollapseResult> MomentGenerator::CalculateMoments(int file_id, const
                     _first_report = false;
 
                     // Do calculations and save collapse results in the memory
-                    auto result_images = _image_moments->createMoments(do_temp, out_file, remove_axis);
+                    auto result_images = _image_moments->CreateMoments(do_temp, out_file, remove_axis);
 
                     for (int i = 0; i < result_images.size(); ++i) {
                         // Set temp moment file name
@@ -187,7 +187,7 @@ void MomentGenerator::ResetImageMoments(const casacore::ImageRegion& image_regio
     _image_moments.reset(new IM(casacore::SubImage<casacore::Float>(*_sub_image), os, true));
 
     // Set moment calculation progress monitor
-    _image_moments->SetProgressMonitor(this);
+    _image_moments->setProgressMonitor(this);
 }
 
 int MomentGenerator::GetMomentMode(CARTA::Moment moment) {

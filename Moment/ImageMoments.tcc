@@ -1,171 +1,20 @@
 //
 // Re-write from the file: "casa/code/imageanalysis/ImageAnalysis/ImageMoments.tcc"
 //
-#ifndef CARTA_BACKEND_ANALYSIS_IMAGEMOMENTS_TCC_
-#define CARTA_BACKEND_ANALYSIS_IMAGEMOMENTS_TCC_
+#ifndef CARTA_BACKEND_MOMENT_IMAGEMOMENTS_TCC_
+#define CARTA_BACKEND_MOMENT_IMAGEMOMENTS_TCC_
 
 using namespace carta;
 
 template <class T>
 ImageMoments<T>::ImageMoments(
     const casacore::ImageInterface<T>& image, casacore::LogIO& os, casacore::Bool over_write_output, casacore::Bool show_progress)
-    : casa::MomentsBase<T>(os, over_write_output, show_progress), _stop(false) {
-    SetNewImage(image);
-}
-
-template <class T>
-casacore::Bool ImageMoments<T>::SetNewImage(const casacore::ImageInterface<T>& image) {
-    T* dummy = nullptr;
-    casacore::DataType imageType = casacore::whatType(dummy);
-    ThrowIf(imageType != casacore::TpFloat && imageType != casacore::TpDouble,
-        "Moments can only be evaluated for Float or Double valued images");
-
-    // Make a clone of the image
+    : casa::ImageMoments<T>(image, os, over_write_output, show_progress), _stop(false) {
     _image.reset(image.cloneII());
-    return true;
 }
 
 template <class T>
-casacore::Bool ImageMoments<T>::setMomentAxis(const casacore::Int moment_axis) {
-    if (!goodParameterStatus_p) {
-        throw casacore::AipsError("Internal class status is bad");
-    }
-
-    momentAxis_p = moment_axis;
-    if (momentAxis_p == momentAxisDefault_p) {
-        momentAxis_p = _image->coordinates().spectralAxisNumber();
-        if (momentAxis_p == -1) {
-            goodParameterStatus_p = false;
-            throw casacore::AipsError("There is no spectral axis in this image -- specify the axis");
-        }
-
-    } else {
-        if (momentAxis_p < 0 || momentAxis_p > casacore::Int(_image->ndim() - 1)) {
-            goodParameterStatus_p = false;
-            throw casacore::AipsError("Illegal moment axis; out of range");
-        }
-        if (_image->shape()(momentAxis_p) <= 0) {
-            goodParameterStatus_p = false;
-            throw casacore::AipsError("Illegal moment axis; it has no pixels");
-        }
-    }
-
-    if (momentAxis_p == _image->coordinates().spectralAxisNumber() && _image->imageInfo().hasMultipleBeams()) {
-        casacore::GaussianBeam max_beam = casa::CasaImageBeamSet(_image->imageInfo().getBeamSet()).getCommonBeam();
-        os_p << casacore::LogIO::NORMAL << "The input image has multiple beams so each "
-             << "plane will be convolved to the largest beam size " << max_beam << " prior to calculating moments" << casacore::LogIO::POST;
-
-        casa::Image2DConvolver<casacore::Float> convolver(_image, nullptr, "", "", false);
-        auto dir_axes = _image->coordinates().directionAxesNumbers();
-        convolver.setAxes(std::make_pair(dir_axes[0], dir_axes[1]));
-        convolver.setKernel("gaussian", max_beam.getMajor(), max_beam.getMinor(), max_beam.getPA(true));
-        convolver.setScale(-1);
-        convolver.setTargetRes(true);
-        auto image_copy = convolver.convolve();
-
-        // Replace the input image pointer with the convolved image pointer and proceed using the convolved image as if it were the input
-        // image
-        _image = image_copy;
-    }
-
-    worldMomentAxis_p = _image->coordinates().pixelAxisToWorldAxis(momentAxis_p);
-
-    return true;
-}
-
-template <class T>
-casacore::Bool ImageMoments<T>::setSmoothMethod(const casacore::Vector<casacore::Int>& smooth_axes,
-    const casacore::Vector<casacore::Int>& kernel_types, const casacore::Vector<casacore::Quantum<casacore::Double>>& kernel_widths) {
-    if (!goodParameterStatus_p) {
-        error_p = "Internal class status is bad";
-        return false;
-    }
-
-    // First check the smoothing axes
-    casacore::Int i;
-    if (smooth_axes.nelements() > 0) {
-        smoothAxes_p = smooth_axes;
-        for (i = 0; i < casacore::Int(smoothAxes_p.nelements()); i++) {
-            if (smoothAxes_p(i) < 0 || smoothAxes_p(i) > casacore::Int(_image->ndim() - 1)) {
-                error_p = "Illegal smoothing axis given";
-                goodParameterStatus_p = false;
-                return false;
-            }
-        }
-        doSmooth_p = true;
-    } else {
-        doSmooth_p = false;
-        return true;
-    }
-
-    // Now check the smoothing types
-    if (kernel_types.nelements() > 0) {
-        kernelTypes_p = kernel_types;
-        for (i = 0; i < casacore::Int(kernelTypes_p.nelements()); i++) {
-            if (kernelTypes_p(i) < 0 || kernelTypes_p(i) > casacore::VectorKernel::NKERNELS - 1) {
-                error_p = "Illegal smoothing kernel types given";
-                goodParameterStatus_p = false;
-                return false;
-            }
-        }
-    } else {
-        error_p = "Smoothing kernel types were not given";
-        goodParameterStatus_p = false;
-        return false;
-    }
-
-    // Check user gave us enough smoothing types
-    if (smooth_axes.nelements() != kernelTypes_p.nelements()) {
-        error_p = "Different number of smoothing axes to kernel types";
-        goodParameterStatus_p = false;
-        return false;
-    }
-
-    // Now the desired smoothing kernels widths. Allow for Hanning to not be given as it is always 1/4, 1/2, 1/4
-    kernelWidths_p.resize(smoothAxes_p.nelements());
-    casacore::Int kernel_widths_size = kernel_widths.size();
-    for (i = 0; i < casacore::Int(smoothAxes_p.nelements()); i++) {
-        if (kernelTypes_p(i) == casacore::VectorKernel::HANNING) {
-            // For Hanning, width is always 3 pix
-            casacore::Quantity tmp(3.0, casacore::String("pix"));
-            kernelWidths_p(i) = tmp;
-
-        } else if (kernelTypes_p(i) == casacore::VectorKernel::BOXCAR) {
-            // For box must be odd number greater than 1
-            if (i > kernel_widths_size - 1) {
-                error_p = "Not enough smoothing widths given";
-                goodParameterStatus_p = false;
-                return false;
-            } else {
-                kernelWidths_p(i) = kernel_widths(i);
-            }
-
-        } else if (kernelTypes_p(i) == casacore::VectorKernel::GAUSSIAN) {
-            if (i > kernel_widths_size - 1) {
-                error_p = "Not enough smoothing widths given";
-                goodParameterStatus_p = false;
-                return false;
-            } else {
-                kernelWidths_p(i) = kernel_widths(i);
-            }
-
-        } else {
-            error_p = "Internal logic error";
-            goodParameterStatus_p = false;
-            return false;
-        }
-    }
-    return true;
-}
-
-template <class T>
-casacore::Bool ImageMoments<T>::setSmoothMethod(const casacore::Vector<casacore::Int>& smooth_axes,
-    const casacore::Vector<casacore::Int>& kernel_types, const casacore::Vector<casacore::Double>& kernel_widths_pix) {
-    return casa::MomentsBase<T>::setSmoothMethod(smooth_axes, kernel_types, kernel_widths_pix);
-}
-
-template <class T>
-std::vector<std::shared_ptr<casacore::MaskedLattice<T>>> ImageMoments<T>::createMoments(
+std::vector<std::shared_ptr<casacore::MaskedLattice<T>>> ImageMoments<T>::CreateMoments(
     casacore::Bool do_temp, const casacore::String& out_file_name, casacore::Bool remove_axis) {
     if (!goodParameterStatus_p) {
         throw casacore::AipsError("Internal status of class is bad.  You have ignored errors");
@@ -363,8 +212,11 @@ std::vector<std::shared_ptr<casacore::MaskedLattice<T>>> ImageMoments<T>::create
     return output_images;
 }
 
-// casacore::Smooth image. casacore::Input masked pixels are zeros before smoothing. The output smoothed image is masked as well to reflect
-// the input mask.
+template <class T>
+void ImageMoments<T>::StopCalculation() {
+    _stop = true;
+}
+
 template <class T>
 SPIIT ImageMoments<T>::SmoothImage() {
     auto max_axis = max(smoothAxes_p) + 1;
@@ -392,16 +244,16 @@ SPIIT ImageMoments<T>::SmoothImage() {
     return smoothed_image;
 }
 
-// Determine the noise level in the image by first making a histogram of the image, then fitting a Gaussian between the 25% levels to give
-// sigma Find a histogram of the image
 template <class T>
 void ImageMoments<T>::WhatIsTheNoise(T& sigma, const casacore::ImageInterface<T>& image) {
+    // Determine the noise level in the image by first making a histogram of the image,
+    // then fitting a Gaussian between the 25% levels to return sigma.
     casa::ImageHistograms<T> hist(image, false);
     const casacore::uInt num_of_bins = 100;
     hist.setNBins(num_of_bins);
 
-    // It is safe to use casacore::Vector rather than casacore::Array because we are binning the whole image and ImageHistograms will only
-    // resize these Vectors to a 1-D shape
+    // It is safe to use casacore::Vector rather than casacore::Array because we are binning the whole image
+    // and ImageHistograms will only resize these Vectors to a 1-D shape
     casacore::Vector<T> values, counts; // (x, y) for histograms vectors
     ThrowIf(!hist.getHistograms(values, counts), "Unable to make histogram of image");
 
@@ -509,16 +361,6 @@ void ImageMoments<T>::WhatIsTheNoise(T& sigma, const casacore::ImageInterface<T>
 }
 
 template <class T>
-void ImageMoments<T>::SetProgressMonitor(casa::ImageMomentsProgressMonitor* monitor) {
-    _progress_monitor = monitor;
-}
-
-template <class T>
-void ImageMoments<T>::StopCalculation() {
-    _stop = true;
-}
-
-template <class T>
 void ImageMoments<T>::LineMultiApply(casacore::PtrBlock<casacore::MaskedLattice<T>*>& lattice_out,
     const casacore::MaskedLattice<T>& lattice_in, casacore::LineCollapser<T, T>& collapser, casacore::uInt collapse_axis,
     casacore::LatticeProgress* tell_progress) {
@@ -552,9 +394,7 @@ void ImageMoments<T>::LineMultiApply(casacore::PtrBlock<casacore::MaskedLattice<
     const casacore::IPosition chunk_slice_end_at_chunk_iter_begin = chunk_slice_end; // As an increment of a chunk for the lattice iterator
 
     // Get a chunk shape and used it to set the data iterator
-    
     casacore::IPosition chunk_shape_init = ChunkShape(collapse_axis, lattice_in);
-    
     casacore::IPosition hdf5_chunk_shape(in_ndim, 1);
     hdf5_chunk_shape[0] = 512;
     hdf5_chunk_shape[1] = 512;
@@ -709,4 +549,4 @@ casacore::IPosition ImageMoments<T>::ChunkShape(casacore::uInt axis, const casac
     return chunk_shape;
 }
 
-#endif // CARTA_BACKEND_ANALYSIS_IMAGEMOMENTS_TCC_
+#endif // CARTA_BACKEND_MOMENT_IMAGEMOMENTS_TCC_
