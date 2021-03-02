@@ -14,6 +14,10 @@
 #include "../Logger/Logger.h"
 #include "../Util.h"
 
+extern "C" {
+#include "star/ast.h"
+}
+
 using namespace carta;
 
 RegionImportExport::RegionImportExport(casacore::CoordinateSystem* image_coord_sys, const casacore::IPosition& image_shape, int file_id)
@@ -235,12 +239,43 @@ bool RegionImportExport::ConvertPointToPixels(
             }
         }
 
+        casacore::Quantum<casacore::Vector<casacore::Double>> angle = direction.getAngle();
+        casacore::Vector<casacore::Double> world_coords = angle.getValue();
+        double xworld[1], yworld[1];
+        xworld[0] = world_coords[0];
+        yworld[0] = world_coords[1];
+
         // Convert world to pixel coordinates (uses wcslib wcss2p(); pixels are not fractional)
-        bool pixel_ok = _coord_sys->directionCoordinate().toPixel(pixel_coords, direction);
-        if (!pixel_ok) {
+        //bool pixel_ok = _coord_sys->directionCoordinate().toPixel(pixel_coords, direction);
+        casacore::Record header_rec;
+        if (_coord_sys->toFITSHeader(header_rec, _image_shape, true)) {
+            // Convert header record to a single string
+            std::ostringstream oss;
+            header_rec.print(oss, -1);
+            const char* header = oss.str().c_str();
+
+            // Use Starlink AST for conversion
+            astBegin;
+
+            // Create input to AST
+            AstFitsChan* fitschan = astFitsChan(nullptr, nullptr, "");
+            astPutCards(fitschan, header);
+            AstFrameSet* wcsinfo = static_cast<AstFrameSet*>(astRead(fitschan));
+
+            // Convert world to pixel
+            double xpixel[1], ypixel[1];
+            astTran2(wcsinfo, 1, xworld, yworld, 0, xpixel, ypixel);
+            astEnd;
+
+            // Return pixel values
+            pixel_coords.resize(2);
+            pixel_coords(0) = xpixel[0];
+            pixel_coords(1) = ypixel[0];
+            return true;
+		} else {
             _import_errors.append("Conversion of region parameters to image pixel coordinates failed.\n");
+            return false;
         }
-        return pixel_ok;
     }
 
     return false;

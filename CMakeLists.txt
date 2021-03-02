@@ -48,7 +48,7 @@ INCLUDE_DIRECTORIES(${HDF5_INCLUDE_DIR})
 ADD_SUBDIRECTORY(carta-protobuf)
 ADD_SUBDIRECTORY(carta-scripting-grpc)
 INCLUDE_DIRECTORIES(${CMAKE_CURRENT_BINARY_DIR})
-INCLUDE_DIRECTORIES(/usr/include/casacore /usr/include/casacode)
+INCLUDE_DIRECTORIES(/usr/include/casacore /usr/include/casacode /usr/include/star)
 INCLUDE_DIRECTORIES(/usr/local/include/casacore /usr/local/include/casacode)
 
 if (${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
@@ -118,6 +118,7 @@ set(LINK_LIBS
         cfitsio
         pugixml
         curl
+        starlink_ast
         casa_casa
         casa_coordinates
         casa_tables
